@@ -14,6 +14,7 @@ export function AccessPage() {
   const activeBookings = bookings.filter(
     (b) =>
       b.userId === currentUser?.id &&
+      b.accessCode &&
       (b.status === 'confirmed' || b.status === 'paid') &&
       !isDateExpired(b.endDate + ' 23:59')
   );

@@ -1,7 +1,7 @@
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { format, addDays, differenceInDays, differenceInHours } from 'date-fns';
-import { PricingModel, Pricing } from '../types';
+import { format, addDays, differenceInDays, differenceInHours, differenceInMinutes } from 'date-fns';
+import type { PricingModel, Pricing, ResourceType, Booking } from '../types';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -23,6 +23,14 @@ export function formatDateTime(date: string | Date): string {
 
 export function formatCurrency(amount: number): string {
   return `¥${amount.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+export function calculateHours(startDate: string, endDate: string): number {
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  const diffMinutes = differenceInMinutes(end, start);
+  if (diffMinutes <= 0) return 0;
+  return Math.max(1, Math.ceil(diffMinutes / 60));
 }
 
 export function calculateTotalPrice(
@@ -51,7 +59,7 @@ export function calculateTotalPrice(
 export function calculateDays(startDate: string, endDate: string): number {
   const start = new Date(startDate);
   const end = new Date(endDate);
-  return differenceInDays(end, start) + 1;
+  return Math.max(1, differenceInDays(end, start) + 1);
 }
 
 export function addDaysToDate(date: string, days: number): string {
@@ -65,10 +73,90 @@ export function isDateExpired(dateStr: string): boolean {
   return date < now;
 }
 
+export function isDateRangeOverlap(
+  aStart: string,
+  aEnd: string,
+  bStart: string,
+  bEnd: string
+): boolean {
+  const aS = new Date(aStart).getTime();
+  const aE = new Date(aEnd).getTime();
+  const bS = new Date(bStart).getTime();
+  const bE = new Date(bEnd).getTime();
+  return aS <= bE && bS <= aE;
+}
+
 export function generateAccessCode(resourceId: string, date: string): string {
   const datePart = date.replace(/-/g, '');
   const randomPart = Math.random().toString(36).substr(2, 4).toUpperCase();
   return `AC-${resourceId.toUpperCase().slice(-3)}-${datePart}-${randomPart}`;
+}
+
+export function validateMinDuration(
+  resourceType: ResourceType,
+  minDuration: number,
+  pricingModel: PricingModel,
+  startDate: string,
+  endDate: string
+): { valid: boolean; message: string } {
+  if (resourceType === 'meetingroom') {
+    const hours = calculateHours(startDate, endDate);
+    if (hours < minDuration) {
+      return {
+        valid: false,
+        message: `会议室最短使用时长为 ${minDuration} 小时，当前选择时长为 ${hours} 小时，请调整时间`
+      };
+    }
+    return { valid: true, message: '' };
+  }
+
+  const days = calculateDays(startDate, endDate);
+  if (pricingModel === 'daily') {
+    if (days < minDuration) {
+      return {
+        valid: false,
+        message: `该资源最短租期为 ${minDuration} 天，当前选择 ${days} 天，请延长租期或选择其他资源`
+      };
+    }
+  } else if (pricingModel === 'weekly') {
+    const minWeeks = Math.ceil(minDuration / 7);
+    const weeks = Math.ceil(days / 7);
+    if (weeks < minWeeks) {
+      return {
+        valid: false,
+        message: `按周计费最短需 ${minWeeks} 周（约 ${minDuration} 天），当前仅 ${weeks} 周`
+      };
+    }
+  }
+  return { valid: true, message: '' };
+}
+
+export function findConflictingBooking(
+  bookings: Booking[],
+  resourceId: string,
+  startDate: string,
+  endDate: string,
+  excludeBookingId?: string
+): Booking | null {
+  for (const b of bookings) {
+    if (b.id === excludeBookingId) continue;
+    if (b.status === 'cancelled') continue;
+    if (b.resourceId !== resourceId) continue;
+    if (isDateRangeOverlap(startDate, endDate, b.startDate, b.endDate)) {
+      return b;
+    }
+  }
+  return null;
+}
+
+export function isResourceAvailable(
+  bookings: Booking[],
+  resourceId: string,
+  startDate: string,
+  endDate: string
+): { available: boolean; conflict?: Booking } {
+  const conflict = findConflictingBooking(bookings, resourceId, startDate, endDate);
+  return { available: !conflict, conflict };
 }
 
 export function getResourceTypeLabel(type: string): string {

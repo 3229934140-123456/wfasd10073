@@ -164,6 +164,9 @@ export function MeetingPackagePage() {
                   {myBookings.map((b) => {
                     const resource = resources.find((r) => r.id === b.resourceId);
                     const isFree = b.freeUsageUsed || b.totalPrice === 0;
+                    const freeUsed = b.deductedFreeHours || 0;
+                    const extraUsed = b.deductedExtraHours || 0;
+                    const totalHours = b.bookingHours || 0;
                     return (
                       <div key={b.id} className="p-4 flex items-center gap-4 hover:bg-slate-50 transition-colors">
                         <img
@@ -172,20 +175,23 @@ export function MeetingPackagePage() {
                           className="h-14 w-20 rounded-lg object-cover flex-shrink-0"
                         />
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
+                          <div className="flex items-center gap-2 mb-1 flex-wrap">
                             <p className="font-medium text-slate-900 truncate">{b.resourceName}</p>
                             {isFree ? (
                               <Badge variant="success" className="flex items-center gap-0.5">
                                 <Gift className="h-3 w-3" />
-                                免费额度
+                                免费 {freeUsed}h
                               </Badge>
                             ) : (
                               <Badge variant="warning">额外计费</Badge>
                             )}
+                            {extraUsed > 0 && (
+                              <Badge variant="danger">超额 {extraUsed}h</Badge>
+                            )}
                           </div>
                           <p className="text-sm text-slate-500">
                             {b.startDate} ~ {b.endDate}
-                            {b.pricingModel === 'daily' && ' · 按日计费'}
+                            {totalHours > 0 && ` · 使用 ${totalHours} 小时`}
                           </p>
                         </div>
                         <div className="text-right flex-shrink-0">
@@ -196,6 +202,7 @@ export function MeetingPackagePage() {
                           )}
                           <p className={cn(
                             'text-xs mt-0.5',
+                            b.status === 'cancelled' ? 'text-red-500' :
                             b.status === 'paid' || b.status === 'confirmed' ? 'text-green-600' : 'text-slate-400'
                           )}>
                             {b.status === 'paid' || b.status === 'confirmed' ? (
@@ -203,6 +210,8 @@ export function MeetingPackagePage() {
                                 <CheckCircle2 className="h-3 w-3" />
                                 已确认
                               </span>
+                            ) : b.status === 'cancelled' ? (
+                              '已取消'
                             ) : (
                               b.status
                             )}

@@ -51,6 +51,9 @@ export interface Booking {
   status: BookingStatus;
   accessCode?: string;
   freeUsageUsed?: boolean;
+  bookingHours?: number;
+  deductedFreeHours?: number;
+  deductedExtraHours?: number;
   createdAt: string;
 }
 

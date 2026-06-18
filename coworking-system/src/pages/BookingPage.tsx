@@ -1,11 +1,11 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useAppStore } from '../store';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { Input, Label, Select } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
-import { cn, formatCurrency, getResourceTypeLabel, getStatusColor, getStatusLabel, calculateTotalPrice, calculateDays, formatDate } from '../utils';
+import { cn, formatCurrency, getResourceTypeLabel, getStatusColor, getStatusLabel, calculateTotalPrice, calculateDays, formatDate, validateMinDuration, isResourceAvailable, calculateHours } from '../utils';
 import type { Resource, ResourceType, PricingModel } from '../types';
 import {
   Search,
@@ -18,10 +18,13 @@ import {
   Building,
   Clock,
   Sparkles,
+  AlertCircle,
+  XCircle,
+  Info,
 } from 'lucide-react';
 
 export function BookingPage() {
-  const { resources, currentUser, agreements, meetingPackages, createBooking, updateBookingStatus, payBooking } = useAppStore();
+  const { resources, currentUser, agreements, meetingPackages, bookings, createBooking, updateBookingStatus, payBooking } = useAppStore();
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
   const [filterPrice, setFilterPrice] = useState<string>('all');
@@ -29,12 +32,17 @@ export function BookingPage() {
   const [selectedResource, setSelectedResource] = useState<Resource | null>(null);
   const [bookingModal, setBookingModal] = useState(false);
   const [detailModal, setDetailModal] = useState(false);
+  const [bookingError, setBookingError] = useState<string>('');
 
   const today = formatDate(new Date());
-  const [startDate, setStartDate] = useState(today);
-  const [endDate, setEndDate] = useState(formatDate(new Date(Date.now() + 86400000)));
+  const [startDate, setStartDate] = useState<string>(today);
+  const [endDate, setEndDate] = useState<string>(formatDate(new Date(Date.now() + 86400000)));
   const [pricingModel, setPricingModel] = useState<PricingModel>('daily');
   const [confirming, setConfirming] = useState(false);
+
+  useEffect(() => {
+    setBookingError('');
+  }, [startDate, endDate, pricingModel, selectedResource]);
 
   const userAgreement = agreements.find(
     (a) => a.userId === currentUser?.id && a.status === 'active'
@@ -42,10 +50,50 @@ export function BookingPage() {
   const userPkg = meetingPackages.find(
     (p) => p.userId === currentUser?.id && p.month === formatDate(new Date(), 'yyyy-MM')
   );
-  const hasFreeHours = selectedResource?.type === 'meetingroom' &&
-    currentUser?.role === 'resident' &&
-    userPkg &&
-    userPkg.usedHours < userPkg.freeHours;
+
+  const totalDays = calculateDays(startDate, endDate);
+  const totalHours = selectedResource?.type === 'meetingroom' ? calculateHours(startDate, endDate) : 0;
+
+  const availableCheck = useMemo(() => {
+    if (!selectedResource) return { available: true };
+    return isResourceAvailable(bookings, selectedResource.id, startDate, endDate);
+  }, [selectedResource, startDate, endDate, bookings]);
+
+  const durationCheck = useMemo(() => {
+    if (!selectedResource) return { valid: true, message: '' };
+    return validateMinDuration(selectedResource.type, selectedResource.minDuration, pricingModel, startDate, endDate);
+  }, [selectedResource, startDate, endDate, pricingModel]);
+
+  const estimatedPrice = selectedResource ? calculateTotalPrice(selectedResource.pricing, pricingModel, startDate, endDate) : 0;
+
+  const freeHoursInfo = useMemo(() => {
+    if (!selectedResource || selectedResource.type !== 'meetingroom' || currentUser?.role !== 'resident' || !userPkg) {
+      return null;
+    }
+    const remaining = Math.max(0, userPkg.freeHours - userPkg.usedHours);
+    const needHours = totalHours || 0;
+    const deductedFree = Math.min(remaining, needHours);
+    const deductedExtra = Math.max(0, needHours - remaining);
+    const extraFee = deductedExtra * userPkg.extraHourRate;
+    return {
+      remaining,
+      needHours,
+      deductedFree,
+      deductedExtra,
+      extraFee,
+      finalPrice: extraFee,
+      hasFree: deductedFree > 0,
+    };
+  }, [selectedResource, currentUser, userPkg, totalHours]);
+
+  const finalPrice = freeHoursInfo ? freeHoursInfo.finalPrice : estimatedPrice;
+  const hasFreeHours = freeHoursInfo?.hasFree || false;
+
+  const canSubmit = selectedResource &&
+    selectedResource.status === 'available' &&
+    availableCheck.available &&
+    durationCheck.valid &&
+    !confirming;
 
   const filteredResources = useMemo(() => {
     let list = resources.filter((r) => r.status !== 'maintenance');
@@ -65,28 +113,33 @@ export function BookingPage() {
     return list;
   }, [resources, search, filterType, filterPrice, sortBy]);
 
-  const totalDays = calculateDays(startDate, endDate);
-  const estimatedPrice = selectedResource ? calculateTotalPrice(selectedResource.pricing, pricingModel, startDate, endDate) : 0;
-  const finalPrice = hasFreeHours ? 0 : estimatedPrice;
-
   const openBooking = (r: Resource) => {
     setSelectedResource(r);
+    setBookingError('');
     setBookingModal(true);
   };
 
   const handleSubmitBooking = async () => {
-    if (!selectedResource) return;
+    if (!selectedResource || !canSubmit) return;
     setConfirming(true);
-    await new Promise((r) => setTimeout(r, 600));
-    const booking = createBooking({
+    setBookingError('');
+    await new Promise((r) => setTimeout(r, 400));
+    const result = createBooking({
       resourceId: selectedResource.id,
       startDate,
       endDate,
       pricingModel,
     });
-    updateBookingStatus(booking.id, 'confirmed');
-    if (finalPrice > 0 && currentUser?.role !== 'resident') {
-      payBooking(booking.id);
+    if (result.error) {
+      setBookingError(result.error);
+      setConfirming(false);
+      return;
+    }
+    if (result.booking) {
+      updateBookingStatus(result.booking.id, 'confirmed');
+      if (finalPrice > 0 && currentUser?.role !== 'resident') {
+        payBooking(result.booking.id);
+      }
     }
     setConfirming(false);
     setBookingModal(false);
@@ -172,75 +225,83 @@ export function BookingPage() {
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {filteredResources.map((r) => (
-            <Card key={r.id} className="overflow-hidden hover:shadow-lg transition-all duration-300 group">
-              <div className="relative h-48 bg-slate-100 overflow-hidden">
-                <img
-                  src={r.image}
-                  alt={r.name}
-                  className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-500"
-                />
-                <div className="absolute top-3 left-3 flex gap-2">
-                  <Badge variant={r.status === 'available' ? 'success' : 'danger'} className="shadow">
-                    {getStatusLabel(r.status)}
-                  </Badge>
-                  <Badge variant="info" className="shadow">{getResourceTypeLabel(r.type)}</Badge>
+          {filteredResources.map((r) => {
+            const check = isResourceAvailable(bookings, r.id, startDate, endDate);
+            return (
+              <Card key={r.id} className="overflow-hidden hover:shadow-lg transition-all duration-300 group">
+                <div className="relative h-48 bg-slate-100 overflow-hidden">
+                  <img
+                    src={r.image}
+                    alt={r.name}
+                    className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-500"
+                  />
+                  <div className="absolute top-3 left-3 flex gap-2 flex-wrap">
+                    <Badge variant={r.status === 'available' ? 'success' : 'danger'} className="shadow">
+                      {getStatusLabel(r.status)}
+                    </Badge>
+                    <Badge variant="info" className="shadow">{getResourceTypeLabel(r.type)}</Badge>
+                    {!check.available && (
+                      <Badge variant="warning" className="shadow">
+                        该时段已预订
+                      </Badge>
+                    )}
+                  </div>
                 </div>
-              </div>
-              <CardHeader className="pb-2">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <CardTitle className="text-base">{r.name}</CardTitle>
-                    <div className="flex items-center gap-1.5 mt-1 text-xs text-slate-500">
-                      <MapPin className="h-3.5 w-3.5" />
-                      {r.location}
+                <CardHeader className="pb-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <CardTitle className="text-base">{r.name}</CardTitle>
+                      <div className="flex items-center gap-1.5 mt-1 text-xs text-slate-500">
+                        <MapPin className="h-3.5 w-3.5" />
+                        {r.location}
+                      </div>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      {r.pricing.daily && <p className="text-lg font-bold text-primary-600">{formatCurrency(r.pricing.daily)}</p>}
+                      <p className="text-xs text-slate-400">起 / {r.type === 'meetingroom' ? '小时' : '日'}</p>
                     </div>
                   </div>
-                  <div className="text-right flex-shrink-0">
-                    {r.pricing.daily && <p className="text-lg font-bold text-primary-600">{formatCurrency(r.pricing.daily)}</p>}
-                    <p className="text-xs text-slate-400">起 / 日</p>
+                </CardHeader>
+                <CardContent className="pb-3 pt-0">
+                  <div className="flex items-center gap-4 text-xs text-slate-500 mb-3">
+                    <span className="inline-flex items-center gap-1">
+                      <Users className="h-3.5 w-3.5" />
+                      {r.capacity}人
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <Clock className="h-3.5 w-3.5" />
+                      最短{r.minDuration}{r.type === 'meetingroom' ? '小时' : '天'}
+                    </span>
                   </div>
-                </div>
-              </CardHeader>
-              <CardContent className="pb-3 pt-0">
-                <div className="flex items-center gap-4 text-xs text-slate-500 mb-3">
-                  <span className="inline-flex items-center gap-1">
-                    <Users className="h-3.5 w-3.5" />
-                    {r.capacity}人
-                  </span>
-                  <span className="inline-flex items-center gap-1">
-                    <Clock className="h-3.5 w-3.5" />
-                    最短{r.minDuration}天
-                  </span>
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {r.amenities.slice(0, 4).map((a) => (
-                    <span key={a} className="text-[11px] px-2 py-0.5 rounded bg-slate-100 text-slate-600">
-                      {a}
-                    </span>
-                  ))}
-                  {r.amenities.length > 4 && (
-                    <span className="text-[11px] px-2 py-0.5 rounded bg-slate-100 text-slate-500">
-                      +{r.amenities.length - 4}
-                    </span>
-                  )}
-                </div>
-              </CardContent>
-              <CardFooter className="pt-0 flex gap-2">
-                <Button variant="outline" size="sm" className="flex-1" onClick={() => { setSelectedResource(r); setDetailModal(true); }}>
-                  详情
-                </Button>
-                <Button
-                  size="sm"
-                  className="flex-1"
-                  onClick={() => openBooking(r)}
-                  disabled={r.status !== 'available'}
-                >
-                  {r.status === 'available' ? '立即预订' : '已占用'}
-                </Button>
-              </CardFooter>
-            </Card>
-          ))}
+                  <div className="flex flex-wrap gap-1">
+                    {r.amenities.slice(0, 4).map((a) => (
+                      <span key={a} className="text-[11px] px-2 py-0.5 rounded bg-slate-100 text-slate-600">
+                        {a}
+                      </span>
+                    ))}
+                    {r.amenities.length > 4 && (
+                      <span className="text-[11px] px-2 py-0.5 rounded bg-slate-100 text-slate-500">
+                        +{r.amenities.length - 4}
+                      </span>
+                    )}
+                  </div>
+                </CardContent>
+                <CardFooter className="pt-0 flex gap-2">
+                  <Button variant="outline" size="sm" className="flex-1" onClick={() => { setSelectedResource(r); setDetailModal(true); }}>
+                    详情
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="flex-1"
+                    onClick={() => openBooking(r)}
+                    disabled={r.status !== 'available' || !check.available}
+                  >
+                    {r.status !== 'available' ? '不可预订' : !check.available ? '该时段已占' : '立即预订'}
+                  </Button>
+                </CardFooter>
+              </Card>
+            );
+          })}
         </div>
       )}
 
@@ -264,7 +325,7 @@ export function BookingPage() {
                     <p className="text-sm text-slate-500">月租 {formatCurrency(selectedResource.pricing.monthly)}</p>
                   )}
                   {selectedResource.pricing.daily && (
-                    <p className="text-2xl font-bold text-primary-600">{formatCurrency(selectedResource.pricing.daily)}<span className="text-sm font-normal text-slate-500">/日</span></p>
+                    <p className="text-2xl font-bold text-primary-600">{formatCurrency(selectedResource.pricing.daily)}<span className="text-sm font-normal text-slate-500">/{selectedResource.type === 'meetingroom' ? '小时' : '日'}</span></p>
                   )}
                 </div>
               </div>
@@ -278,7 +339,7 @@ export function BookingPage() {
                 <div className="rounded-xl bg-slate-50 p-3">
                   <Clock className="h-5 w-5 text-slate-400 mb-1" />
                   <p className="text-xs text-slate-500">最短租期</p>
-                  <p className="text-lg font-semibold">{selectedResource.minDuration}天</p>
+                  <p className="text-lg font-semibold">{selectedResource.minDuration}{selectedResource.type === 'meetingroom' ? '小时' : '天'}</p>
                 </div>
                 {selectedResource.pricing.weekly && (
                   <div className="rounded-xl bg-slate-50 p-3">
@@ -334,9 +395,10 @@ export function BookingPage() {
               <div className="flex-1 min-w-0">
                 <p className="font-semibold text-slate-900">{selectedResource.name}</p>
                 <p className="text-xs text-slate-500 mt-0.5">{selectedResource.location} · {getResourceTypeLabel(selectedResource.type)}</p>
-                <div className="flex items-center gap-2 mt-2">
+                <div className="flex items-center gap-2 mt-2 flex-wrap">
                   <span className="text-sm font-semibold text-primary-600">{formatCurrency(finalPrice)}</span>
-                  {hasFreeHours && <Badge variant="success">使用免费额度</Badge>}
+                  {hasFreeHours && <Badge variant="success">使用免费额度 {freeHoursInfo?.deductedFree} 小时</Badge>}
+                  {freeHoursInfo && freeHoursInfo.deductedExtra > 0 && <Badge variant="warning">超额 {freeHoursInfo.deductedExtra} 小时</Badge>}
                 </div>
               </div>
             </div>
@@ -344,12 +406,22 @@ export function BookingPage() {
             <div className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <Label>开始日期</Label>
-                  <Input type="date" value={startDate} min={today} onChange={(e) => setStartDate(e.target.value)} />
+                  <Label>开始{selectedResource.type === 'meetingroom' ? '时间' : '日期'}</Label>
+                  <Input
+                    type={selectedResource.type === 'meetingroom' ? 'datetime-local' : 'date'}
+                    value={selectedResource.type === 'meetingroom' ? startDate.replace(' ', 'T').slice(0, 16) : startDate}
+                    min={today}
+                    onChange={(e) => setStartDate(selectedResource.type === 'meetingroom' ? e.target.value.replace('T', ' ') : e.target.value)}
+                  />
                 </div>
                 <div className="space-y-1.5">
-                  <Label>结束日期</Label>
-                  <Input type="date" value={endDate} min={startDate} onChange={(e) => setEndDate(e.target.value)} />
+                  <Label>结束{selectedResource.type === 'meetingroom' ? '时间' : '日期'}</Label>
+                  <Input
+                    type={selectedResource.type === 'meetingroom' ? 'datetime-local' : 'date'}
+                    value={selectedResource.type === 'meetingroom' ? endDate.replace(' ', 'T').slice(0, 16) : endDate}
+                    min={startDate}
+                    onChange={(e) => setEndDate(selectedResource.type === 'meetingroom' ? e.target.value.replace('T', ' ') : e.target.value)}
+                  />
                 </div>
               </div>
 
@@ -363,21 +435,47 @@ export function BookingPage() {
               </div>
             </div>
 
-            {pricingModel !== 'monthly' && (
-              <div className="text-sm text-slate-500 flex items-center gap-1">
-                <Calendar className="h-4 w-4" />
-                共 {totalDays} 天
+            <div className="text-sm text-slate-500 flex items-center gap-1">
+              <Calendar className="h-4 w-4" />
+              {selectedResource.type === 'meetingroom' ? `共 ${totalHours} 小时` : pricingModel === 'daily' ? `共 ${totalDays} 天` : pricingModel === 'weekly' ? `共 ${Math.ceil(totalDays / 7)} 周` : '1 个月'}
+            </div>
+
+            {!availableCheck.available && availableCheck.conflict && (
+              <div className="p-3 rounded-lg bg-red-50 border border-red-200 flex items-start gap-2">
+                <XCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium text-red-900">该时段已被预订</p>
+                  <p className="text-xs text-red-700 mt-0.5">
+                    {availableCheck.conflict.userName} 已预订 {availableCheck.conflict.startDate} 至 {availableCheck.conflict.endDate}，请选择其他时段
+                  </p>
+                </div>
               </div>
             )}
 
-            {hasFreeHours && userPkg && (
+            {!durationCheck.valid && (
+              <div className="p-3 rounded-lg bg-yellow-50 border border-yellow-200 flex items-start gap-2">
+                <AlertCircle className="h-5 w-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium text-yellow-900">租期不符合要求</p>
+                  <p className="text-xs text-yellow-700 mt-0.5">{durationCheck.message}</p>
+                </div>
+              </div>
+            )}
+
+            {freeHoursInfo && userPkg && (
               <div className="p-3 rounded-lg bg-green-50 border border-green-200 flex items-start gap-2">
                 <Sparkles className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
-                <div>
+                <div className="flex-1">
                   <p className="text-sm font-medium text-green-900">您的免费会议室额度</p>
                   <p className="text-xs text-green-700 mt-0.5">
-                    本月已使用 {userPkg.usedHours} / {userPkg.freeHours} 小时，剩余 {userPkg.freeHours - userPkg.usedHours} 小时
+                    本月已使用 {userPkg.usedHours} / {userPkg.freeHours} 小时，剩余 {freeHoursInfo.remaining} 小时
                   </p>
+                  {freeHoursInfo.deductedFree > 0 && (
+                    <p className="text-xs text-green-700 mt-0.5">
+                      本次使用：免费 {freeHoursInfo.deductedFree} 小时
+                      {freeHoursInfo.deductedExtra > 0 && `，超额 ${freeHoursInfo.deductedExtra} 小时 × ${formatCurrency(userPkg.extraHourRate)} = ${formatCurrency(freeHoursInfo.extraFee)}`}
+                    </p>
+                  )}
                 </div>
               </div>
             )}
@@ -385,16 +483,36 @@ export function BookingPage() {
             <div className="p-4 rounded-xl bg-slate-900 text-white space-y-2">
               <div className="flex justify-between text-sm text-slate-300">
                 <span>预订时长</span>
-                <span>{pricingModel === 'daily' ? `${totalDays}天` : pricingModel === 'weekly' ? `${Math.ceil(totalDays / 7)}周` : '1个月'}</span>
+                <span>
+                  {selectedResource.type === 'meetingroom'
+                    ? `${totalHours} 小时`
+                    : pricingModel === 'daily'
+                    ? `${totalDays} 天`
+                    : pricingModel === 'weekly'
+                    ? `${Math.ceil(totalDays / 7)} 周`
+                    : '1 个月'}
+                </span>
               </div>
               <div className="flex justify-between text-sm text-slate-300">
                 <span>{hasFreeHours ? '免费额度抵扣' : '单价'}</span>
-                <span>{hasFreeHours ? '-' : formatCurrency(
-                  pricingModel === 'daily' ? (selectedResource.pricing.daily || 0) :
-                  pricingModel === 'weekly' ? (selectedResource.pricing.weekly || 0) :
-                  (selectedResource.pricing.monthly || 0)
-                )}</span>
+                <span>
+                  {hasFreeHours
+                    ? '-'
+                    : formatCurrency(
+                        pricingModel === 'daily'
+                          ? selectedResource.pricing.daily || 0
+                          : pricingModel === 'weekly'
+                          ? selectedResource.pricing.weekly || 0
+                          : selectedResource.pricing.monthly || 0
+                      )}
+                </span>
               </div>
+              {freeHoursInfo && freeHoursInfo.deductedExtra > 0 && (
+                <div className="flex justify-between text-sm text-yellow-300">
+                  <span>超额小时费</span>
+                  <span>{formatCurrency(freeHoursInfo.extraFee)}</span>
+                </div>
+              )}
               <div className="border-t border-slate-700 my-2" />
               <div className="flex justify-between items-center">
                 <span className="font-medium">应付金额</span>
@@ -402,16 +520,30 @@ export function BookingPage() {
               </div>
             </div>
 
+            {bookingError && (
+              <div className="p-3 rounded-lg bg-red-50 border border-red-200 flex items-start gap-2">
+                <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+                <p className="text-sm text-red-800">{bookingError}</p>
+              </div>
+            )}
+
             {currentUser?.role === 'resident' && finalPrice > 0 && (
-              <div className="p-3 rounded-lg bg-blue-50 border border-blue-200 text-sm text-blue-700">
-                💡 作为驻场客户，本次费用将计入您的月度账单，月底统一结算。
+              <div className="p-3 rounded-lg bg-blue-50 border border-blue-200 text-sm text-blue-700 flex items-start gap-2">
+                <Info className="h-5 w-5 flex-shrink-0 mt-0.5" />
+                作为驻场客户，本次费用将计入您的月度账单，月底统一结算。
               </div>
             )}
 
             <div className="flex gap-3 pt-2">
               <Button variant="outline" className="flex-1" onClick={() => setBookingModal(false)} disabled={confirming}>取消</Button>
-              <Button className="flex-1" onClick={handleSubmitBooking} disabled={confirming}>
-                {confirming ? '处理中...' : finalPrice > 0 && currentUser?.role !== 'resident' ? '确认并支付' : '确认预订'}
+              <Button className="flex-1" onClick={handleSubmitBooking} disabled={!canSubmit}>
+                {confirming
+                  ? '处理中...'
+                  : !canSubmit
+                  ? '请调整预订信息'
+                  : finalPrice > 0 && currentUser?.role !== 'resident'
+                  ? '确认并支付'
+                  : '确认预订'}
               </Button>
             </div>
           </div>

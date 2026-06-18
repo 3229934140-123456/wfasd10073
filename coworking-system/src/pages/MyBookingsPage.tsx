@@ -10,9 +10,10 @@ import { QRCodeSVG } from 'qrcode.react';
 import type { Booking } from '../types';
 
 export function MyBookingsPage() {
-  const { currentUser, bookings, resources, cancelBooking, payBooking } = useAppStore();
+  const { currentUser, bookings, resources, cancelBooking, payBooking, addNotification } = useAppStore();
   const [filter, setFilter] = useState<'all' | 'active' | 'history'>('all');
   const [qrBooking, setQrBooking] = useState<Booking | null>(null);
+  const [cancellingId, setCancellingId] = useState<string>('');
 
   const myBookings = bookings.filter((b) => b.userId === currentUser?.id);
   const now = new Date();
@@ -109,9 +110,19 @@ export function MyBookingsPage() {
                 filtered.map((b) => {
                   const resource = resources.find((r) => r.id === b.resourceId);
                   const days = calculateDays(b.startDate, b.endDate);
-                  const canCancel = b.status !== 'cancelled' && b.status !== 'completed' && new Date(b.startDate) > now;
+                  const canCancel = b.status !== 'cancelled' && b.status !== 'completed';
                   const canPay = (b.status === 'confirmed' || b.status === 'pending') && b.totalPrice > 0 && currentUser?.role !== 'resident';
-                  const showQr = (b.status === 'confirmed' || b.status === 'paid') && new Date(b.endDate) >= new Date(formatDate(new Date()));
+                  const showQr = b.accessCode && (b.status === 'confirmed' || b.status === 'paid') && new Date(b.endDate) >= new Date(formatDate(new Date()));
+                  const isCancelling = cancellingId === b.id;
+
+                  const handleCancel = async () => {
+                    setCancellingId(b.id);
+                    const result = cancelBooking(b.id);
+                    if (!result.success && result.error) {
+                      addNotification(result.error, 'error');
+                    }
+                    setCancellingId('');
+                  };
 
                   return (
                     <TableRow key={b.id}>
@@ -173,9 +184,9 @@ export function MyBookingsPage() {
                             </Button>
                           )}
                           {canCancel && (
-                            <Button size="sm" variant="ghost" onClick={() => cancelBooking(b.id)} className="text-red-600 hover:bg-red-50">
+                            <Button size="sm" variant="ghost" onClick={handleCancel} className="text-red-600 hover:bg-red-50" disabled={isCancelling}>
                               <XCircle className="h-4 w-4" />
-                              取消
+                              {isCancelling ? '处理中' : '取消'}
                             </Button>
                           )}
                         </div>

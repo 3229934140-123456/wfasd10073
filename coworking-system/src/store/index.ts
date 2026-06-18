@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { User, Resource, Booking, Payment, MonthlyAgreement, MeetingPackage, Visitor, CommunityPost, CommunityComment, PricingModel, DailyAnalytics, ResourceOccupancy } from '../types';
+import type { User, Resource, Booking, Payment, MonthlyAgreement, MeetingPackage, Visitor, CommunityPost, CommunityComment, PricingModel, DailyAnalytics, ResourceOccupancy } from '../types';
 import { mockUsers, mockResources, mockBookings, mockPayments, mockAgreements, mockMeetingPackages, mockVisitors, mockPosts, mockComments, mockDailyAnalytics, mockResourceOccupancy } from '../data/mockData';
-import { generateId, calculateTotalPrice, generateAccessCode, formatDate } from '../utils';
+import { generateId, calculateTotalPrice, generateAccessCode, formatDate, validateMinDuration, findConflictingBooking, calculateHours } from '../utils';
 
 interface AppState {
   currentUser: User | null;
@@ -27,9 +27,9 @@ interface AppState {
   updateResource: (id: string, data: Partial<Resource>) => void;
   deleteResource: (id: string) => void;
 
-  createBooking: (data: { resourceId: string; startDate: string; endDate: string; pricingModel: PricingModel }) => Booking;
+  createBooking: (data: { resourceId: string; startDate: string; endDate: string; pricingModel: PricingModel }) => { booking?: Booking; error?: string };
   updateBookingStatus: (id: string, status: Booking['status']) => void;
-  cancelBooking: (id: string) => void;
+  cancelBooking: (id: string) => { success: boolean; error?: string };
 
   payBooking: (bookingId: string) => void;
   addPayment: (payment: Omit<Payment, 'id' | 'createdAt'>) => void;
@@ -112,32 +112,96 @@ export const useAppStore = create<AppState>()(
       },
 
       createBooking: (data) => {
-        const { currentUser, resources, agreements, meetingPackages } = get();
-        if (!currentUser) throw new Error('未登录');
+        const { currentUser, resources, agreements, meetingPackages, bookings } = get();
+        if (!currentUser) return { error: '请先登录后再预订' };
 
         const resource = resources.find((r) => r.id === data.resourceId);
-        if (!resource) throw new Error('资源不存在');
+        if (!resource) return { error: '资源不存在' };
+        if (resource.status === 'maintenance') return { error: '该资源正在维护中，暂时无法预订' };
+        if (resource.status === 'occupied') return { error: '该资源已被长期占用' };
 
+        const durationCheck = validateMinDuration(
+          resource.type,
+          resource.minDuration,
+          data.pricingModel,
+          data.startDate,
+          data.endDate
+        );
+        if (!durationCheck.valid) return { error: durationCheck.message };
+
+        const conflict = findConflictingBooking(bookings, data.resourceId, data.startDate, data.endDate);
+        if (conflict) {
+          const conflictUser = conflict.userName || '其他用户';
+          const conflictTime = `${conflict.startDate} 至 ${conflict.endDate}`;
+          return { error: `该资源在 ${conflictTime} 已被 ${conflictUser} 预订，请选择其他时段` };
+        }
+
+        const bookingHours = resource.type === 'meetingroom' ? calculateHours(data.startDate, data.endDate) : undefined;
         let totalPrice = calculateTotalPrice(resource.pricing, data.pricingModel, data.startDate, data.endDate);
         let freeUsageUsed = false;
+        let deductedFreeHours = 0;
+        let deductedExtraHours = 0;
 
-        if (resource.type === 'meetingroom' && currentUser.role === 'resident') {
+        if (resource.type === 'meetingroom' && currentUser.role === 'resident' && bookingHours) {
+          const currentMonth = formatDate(new Date(), 'yyyy-MM');
           const userAgreement = agreements.find((a) => a.userId === currentUser.id && a.status === 'active');
-          const userPkg = meetingPackages.find((p) => p.userId === currentUser.id && p.month === formatDate(new Date(), 'yyyy-MM'));
-          
-          if (userAgreement && userPkg && userPkg.usedHours < userPkg.freeHours) {
-            freeUsageUsed = true;
-            totalPrice = 0;
-            set({
-              meetingPackages: meetingPackages.map((p) =>
-                p.id === userPkg.id ? { ...p, usedHours: p.usedHours + 1 } : p
-              )
-            });
-            set({
-              agreements: agreements.map((a) =>
-                a.id === userAgreement.id ? { ...a, usedMeetingHours: a.usedMeetingHours + 1 } : a
-              )
-            });
+          let userPkg = meetingPackages.find((p) => p.userId === currentUser.id && p.month === currentMonth);
+
+          if (userAgreement) {
+            if (!userPkg) {
+              userPkg = {
+                id: generateId('mp'),
+                userId: currentUser.id,
+                userName: currentUser.name,
+                agreementId: userAgreement.id,
+                freeHours: userAgreement.freeMeetingHours,
+                usedHours: 0,
+                extraHours: 0,
+                extraHourRate: resource.pricing.daily ? Math.round(resource.pricing.daily / 8) : 100,
+                month: currentMonth
+              };
+              set({ meetingPackages: [...get().meetingPackages, userPkg] });
+            }
+
+            const remainingHours = Math.max(0, userPkg.freeHours - userPkg.usedHours);
+            if (remainingHours > 0) {
+              deductedFreeHours = Math.min(remainingHours, bookingHours);
+              deductedExtraHours = Math.max(0, bookingHours - remainingHours);
+            } else {
+              deductedExtraHours = bookingHours;
+            }
+
+            if (deductedFreeHours > 0) {
+              freeUsageUsed = true;
+              const extraFee = deductedExtraHours * userPkg.extraHourRate;
+              totalPrice = extraFee;
+
+              set({
+                meetingPackages: get().meetingPackages.map((p) =>
+                  p.id === userPkg!.id
+                    ? { ...p, usedHours: p.usedHours + deductedFreeHours, extraHours: p.extraHours + deductedExtraHours }
+                    : p
+                ),
+                agreements: get().agreements.map((a) =>
+                  a.id === userAgreement.id ? { ...a, usedMeetingHours: a.usedMeetingHours + deductedFreeHours } : a
+                )
+              });
+
+              if (deductedExtraHours > 0 && currentUser.role === 'resident') {
+                const extraPayment: Payment = {
+                  id: generateId('p'),
+                  bookingId: undefined,
+                  userId: currentUser.id,
+                  userName: currentUser.name,
+                  amount: extraFee,
+                  method: 'monthly',
+                  status: 'pending',
+                  description: `会议室 ${resource.name} 超额使用 ${deductedExtraHours} 小时（${formatDate(data.startDate)}）`,
+                  createdAt: formatDate(new Date(), 'yyyy-MM-dd HH:mm')
+                };
+                set({ payments: [...get().payments, extraPayment] });
+              }
+            }
           }
         }
 
@@ -147,16 +211,32 @@ export const useAppStore = create<AppState>()(
           resourceName: resource.name,
           userId: currentUser.id,
           userName: currentUser.name,
-          ...data,
+          resourceId: data.resourceId,
+          startDate: data.startDate,
+          endDate: data.endDate,
+          pricingModel: data.pricingModel,
           totalPrice,
           status: 'pending',
           accessCode,
           freeUsageUsed,
+          bookingHours,
+          deductedFreeHours,
+          deductedExtraHours,
           createdAt: formatDate(new Date(), 'yyyy-MM-dd HH:mm')
         };
         set({ bookings: [...get().bookings, newBooking] });
-        get().addNotification(freeUsageUsed ? '预订成功！已使用免费次数包' : '预订申请已提交', 'success');
-        return newBooking;
+
+        if (freeUsageUsed && deductedExtraHours > 0) {
+          get().addNotification(
+            `预订成功！使用免费额度 ${deductedFreeHours} 小时，超额 ${deductedExtraHours} 小时已计入月度账单`,
+            'warning'
+          );
+        } else if (freeUsageUsed) {
+          get().addNotification(`预订成功！已使用免费额度 ${deductedFreeHours} 小时`, 'success');
+        } else {
+          get().addNotification('预订申请已提交，请完成支付', 'success');
+        }
+        return { booking: newBooking };
       },
 
       updateBookingStatus: (id, status) => {
@@ -166,16 +246,57 @@ export const useAppStore = create<AppState>()(
       },
 
       cancelBooking: (id) => {
+        const { bookings, meetingPackages, agreements, payments } = get();
+        const booking = bookings.find((b) => b.id === id);
+        if (!booking) return { success: false, error: '预订不存在' };
+        if (booking.status === 'cancelled') return { success: false, error: '该预订已取消' };
+        if (booking.status === 'completed') return { success: false, error: '已完成的预订无法取消' };
+
+        const now = new Date();
+        const start = new Date(booking.startDate);
+        if (start < now && booking.status !== 'pending') {
+          return { success: false, error: '已开始的预订无法取消，请联系运营方' };
+        }
+
+        if (booking.freeUsageUsed && (booking.deductedFreeHours || 0) > 0) {
+          const rollbackHours = booking.deductedFreeHours || 0;
+          set({
+            meetingPackages: meetingPackages.map((p) =>
+              p.userId === booking.userId && p.month === formatDate(new Date(booking.createdAt), 'yyyy-MM')
+                ? { ...p, usedHours: Math.max(0, p.usedHours - rollbackHours) }
+                : p
+            ),
+            agreements: agreements.map((a) =>
+              a.userId === booking.userId ? { ...a, usedMeetingHours: Math.max(0, a.usedMeetingHours - rollbackHours) } : a
+            ),
+            payments: payments.map((p) =>
+              p.bookingId === booking.id ? { ...p, status: 'refunded' as const } : p
+            )
+          });
+        }
+
         set({
-          bookings: get().bookings.map((b) => (b.id === id ? { ...b, status: 'cancelled' } : b))
+          bookings: bookings.map((b) =>
+            b.id === id
+              ? { ...b, status: 'cancelled' as const, accessCode: undefined }
+              : b
+          )
         });
-        get().addNotification('预订已取消', 'info');
+
+        get().addNotification('预订已取消，资源档期已释放', 'info');
+        return { success: true };
       },
 
       payBooking: (bookingId) => {
         const { bookings, currentUser } = get();
         const booking = bookings.find((b) => b.id === bookingId);
         if (!booking || !currentUser) return;
+
+        const conflict = findConflictingBooking(bookings, booking.resourceId, booking.startDate, booking.endDate, booking.id);
+        if (conflict) {
+          get().addNotification('该时段已被其他用户预订，支付失败', 'error');
+          return;
+        }
 
         const payment: Payment = {
           id: generateId('p'),
@@ -193,7 +314,7 @@ export const useAppStore = create<AppState>()(
           payments: [...get().payments, payment],
           bookings: get().bookings.map((b) => (b.id === bookingId ? { ...b, status: 'paid' } : b))
         });
-        get().addNotification('支付成功！', 'success');
+        get().addNotification('支付成功！门禁二维码已生效', 'success');
       },
 
       addPayment: (payment) => {
