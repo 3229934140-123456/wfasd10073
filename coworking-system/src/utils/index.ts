@@ -98,13 +98,15 @@ export function validateMinDuration(
   pricingModel: PricingModel,
   startDate: string,
   endDate: string
-): { valid: boolean; message: string } {
+): { valid: boolean; message: string; shortage?: number } {
   if (resourceType === 'meetingroom') {
     const hours = calculateHours(startDate, endDate);
     if (hours < minDuration) {
+      const shortage = minDuration - hours;
       return {
         valid: false,
-        message: `会议室最短使用时长为 ${minDuration} 小时，当前选择时长为 ${hours} 小时，请调整时间`
+        shortage,
+        message: `会议室最短使用时长为 ${minDuration} 小时，当前仅 ${hours} 小时，还差 ${shortage} 小时，请调整时间`
       };
     }
     return { valid: true, message: '' };
@@ -113,18 +115,21 @@ export function validateMinDuration(
   const days = calculateDays(startDate, endDate);
   if (pricingModel === 'daily') {
     if (days < minDuration) {
+      const shortage = minDuration - days;
       return {
         valid: false,
-        message: `该资源最短租期为 ${minDuration} 天，当前选择 ${days} 天，请延长租期或选择其他资源`
+        shortage,
+        message: `该资源最短租期为 ${minDuration} 天，当前仅 ${days} 天，还差 ${shortage} 天，请延长租期或选择其他资源`
       };
     }
   } else if (pricingModel === 'weekly') {
-    const minWeeks = Math.ceil(minDuration / 7);
-    const weeks = Math.ceil(days / 7);
-    if (weeks < minWeeks) {
+    const minDaysWeekly = Math.ceil(minDuration / 7) * 7;
+    if (days < minDuration) {
+      const shortage = minDaysWeekly - days > 0 ? minDaysWeekly - days : minDuration - days;
       return {
         valid: false,
-        message: `按周计费最短需 ${minWeeks} 周（约 ${minDuration} 天），当前仅 ${weeks} 周`
+        shortage,
+        message: `按周计费需至少 ${Math.ceil(minDuration / 7)} 周（即 ${minDaysWeekly} 天），当前仅 ${days} 天，还差 ${shortage} 天`
       };
     }
   }

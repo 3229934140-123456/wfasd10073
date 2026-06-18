@@ -164,16 +164,13 @@ export const useAppStore = create<AppState>()(
             }
 
             const remainingHours = Math.max(0, userPkg.freeHours - userPkg.usedHours);
-            if (remainingHours > 0) {
-              deductedFreeHours = Math.min(remainingHours, bookingHours);
-              deductedExtraHours = Math.max(0, bookingHours - remainingHours);
-            } else {
-              deductedExtraHours = bookingHours;
-            }
+            deductedFreeHours = Math.min(remainingHours, bookingHours);
+            deductedExtraHours = Math.max(0, bookingHours - deductedFreeHours);
 
-            if (deductedFreeHours > 0) {
-              freeUsageUsed = true;
-              const extraFee = deductedExtraHours * userPkg.extraHourRate;
+            const rate = userPkg.extraHourRate;
+            if (deductedExtraHours > 0 || deductedFreeHours > 0) {
+              freeUsageUsed = deductedFreeHours > 0;
+              const extraFee = deductedExtraHours * rate;
               totalPrice = extraFee;
 
               set({
@@ -258,20 +255,39 @@ export const useAppStore = create<AppState>()(
           return { success: false, error: '已开始的预订无法取消，请联系运营方' };
         }
 
-        if (booking.freeUsageUsed && (booking.deductedFreeHours || 0) > 0) {
-          const rollbackHours = booking.deductedFreeHours || 0;
+        const rollbackFree = booking.deductedFreeHours || 0;
+        const rollbackExtra = booking.deductedExtraHours || 0;
+
+        if (rollbackFree > 0 || rollbackExtra > 0) {
+          const bookingMonth = formatDate(new Date(booking.createdAt || Date.now()), 'yyyy-MM');
           set({
             meetingPackages: meetingPackages.map((p) =>
-              p.userId === booking.userId && p.month === formatDate(new Date(booking.createdAt), 'yyyy-MM')
-                ? { ...p, usedHours: Math.max(0, p.usedHours - rollbackHours) }
+              p.userId === booking.userId && p.month === bookingMonth
+                ? {
+                    ...p,
+                    usedHours: Math.max(0, p.usedHours - rollbackFree),
+                    extraHours: Math.max(0, p.extraHours - rollbackExtra),
+                  }
                 : p
             ),
             agreements: agreements.map((a) =>
-              a.userId === booking.userId ? { ...a, usedMeetingHours: Math.max(0, a.usedMeetingHours - rollbackHours) } : a
+              a.userId === booking.userId ? { ...a, usedMeetingHours: Math.max(0, a.usedMeetingHours - rollbackFree) } : a
             ),
-            payments: payments.map((p) =>
-              p.bookingId === booking.id ? { ...p, status: 'refunded' as const } : p
-            )
+          });
+        }
+
+        if (rollbackExtra > 0 && booking.totalPrice > 0) {
+          const bookingCreated = new Date(booking.createdAt).getTime();
+          set({
+            payments: payments.map((p) => {
+              if (p.userId !== booking.userId) return p;
+              if (p.status !== 'pending') return p;
+              if (p.method !== 'monthly') return p;
+              if (Math.abs(p.amount - booking.totalPrice) > 0.01) return p;
+              const pCreated = new Date(p.createdAt).getTime();
+              if (Math.abs(pCreated - bookingCreated) > 5000) return p;
+              return { ...p, status: 'refunded' as const };
+            })
           });
         }
 
@@ -280,10 +296,10 @@ export const useAppStore = create<AppState>()(
             b.id === id
               ? { ...b, status: 'cancelled' as const, accessCode: undefined }
               : b
-          )
+          ),
         });
 
-        get().addNotification('预订已取消，资源档期已释放', 'info');
+        get().addNotification('预订已取消，资源档期已释放，额度已回退', 'info');
         return { success: true };
       },
 

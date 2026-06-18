@@ -15,9 +15,11 @@ export function BillingPage() {
   const myPkgs = meetingPackages.filter((p) => p.userId === currentUser?.id);
 
   const totalPaid = myPayments.filter((p) => p.status === 'paid').reduce((s, p) => s + p.amount, 0);
-  const pendingAmount = myPayments.filter((p) => p.status === 'pending').reduce((s, p) => s + p.amount, 0);
-  const monthlyFee = myAgreements.reduce((s, a) => s + a.monthlyFee, 0);
+  const allPending = myPayments.filter((p) => p.status === 'pending');
   const extraMeetingFee = myPkgs.reduce((s, p) => s + p.extraHours * p.extraHourRate, 0);
+  const pendingBookingPayments = allPending.filter((p) => !!p.bookingId);
+  const pendingAmount = pendingBookingPayments.reduce((s, p) => s + p.amount, 0);
+  const monthlyFee = myAgreements.reduce((s, a) => s + a.monthlyFee, 0);
 
   const currentMonthBill = monthlyFee + extraMeetingFee + pendingAmount;
 
@@ -183,7 +185,8 @@ export function BillingPage() {
             myAgreements.map((a) => {
               const pkg = meetingPackages.find((p) => p.agreementId === a.id);
               const meetingExtra = pkg ? pkg.extraHours * pkg.extraHourRate : 0;
-              const total = a.monthlyFee + meetingExtra;
+              const pendingBooking = pendingBookingPayments.reduce((s, p) => s + p.amount, 0);
+              const total = a.monthlyFee + meetingExtra + pendingBooking;
               return (
                 <Card key={a.id}>
                   <CardHeader className="pb-3">
@@ -254,12 +257,12 @@ export function BillingPage() {
                           </>
                         )}
 
-                        {pendingAmount > 0 && (
+                        {pendingBooking > 0 && (
                           <div className="flex justify-between items-center py-2 border-b border-slate-100">
                             <div className="text-slate-600">
-                              临时预订（会议室等）
+                              临时预订（非月度资源）
                             </div>
-                            <span className="font-medium">{formatCurrency(pendingAmount)}</span>
+                            <span className="font-medium">{formatCurrency(pendingBooking)}</span>
                           </div>
                         )}
 
