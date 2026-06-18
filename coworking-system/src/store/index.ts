@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { User, Resource, Booking, Payment, MonthlyAgreement, MeetingPackage, Visitor, CommunityPost, CommunityComment, PricingModel, DailyAnalytics, ResourceOccupancy } from '../types';
-import { mockUsers, mockResources, mockBookings, mockPayments, mockAgreements, mockMeetingPackages, mockVisitors, mockPosts, mockComments, mockDailyAnalytics, mockResourceOccupancy } from '../data/mockData';
+import type { User, Resource, Booking, Payment, MonthlyAgreement, MeetingPackage, Visitor, CommunityPost, CommunityComment, PricingModel, DailyAnalytics, ResourceOccupancy, MonthlyBill } from '../types';
+import { mockUsers, mockResources, mockBookings, mockPayments, mockAgreements, mockMeetingPackages, mockVisitors, mockPosts, mockComments, mockDailyAnalytics, mockResourceOccupancy, mockMonthlyBills } from '../data/mockData';
 import { generateId, calculateTotalPrice, generateAccessCode, formatDate, validateMinDuration, findConflictingBooking, calculateHours } from '../utils';
 
 interface AppState {
@@ -10,6 +10,7 @@ interface AppState {
   resources: Resource[];
   bookings: Booking[];
   payments: Payment[];
+  monthlyBills: MonthlyBill[];
   agreements: MonthlyAgreement[];
   meetingPackages: MeetingPackage[];
   visitors: Visitor[];
@@ -43,6 +44,11 @@ interface AppState {
 
   addNotification: (message: string, type?: 'info' | 'success' | 'warning' | 'error') => void;
   removeNotification: (id: string) => void;
+
+  generateMonthlyBill: (agreementId: string, month: string) => MonthlyBill;
+  confirmSettlement: (billId: string) => void;
+  markBillPaid: (billId: string, amount?: number) => void;
+  getBillByMonth: (userId: string, month: string) => MonthlyBill | null;
 }
 
 export const useAppStore = create<AppState>()(
@@ -53,6 +59,7 @@ export const useAppStore = create<AppState>()(
       resources: mockResources,
       bookings: mockBookings,
       payments: mockPayments,
+      monthlyBills: mockMonthlyBills,
       agreements: mockAgreements,
       meetingPackages: mockMeetingPackages,
       visitors: mockVisitors,
@@ -426,6 +433,145 @@ export const useAppStore = create<AppState>()(
 
       removeNotification: (id) => {
         set({ notifications: get().notifications.filter((n) => n.id !== id) });
+      },
+
+      generateMonthlyBill: (agreementId, month) => {
+        const { agreements, meetingPackages, bookings, payments, users } = get();
+        const agreement = agreements.find((a) => a.id === agreementId);
+        if (!agreement) throw new Error('协议不存在');
+        const user = users.find((u) => u.id === agreement.userId);
+
+        const baseFee = agreement.monthlyFee;
+        const pkg = meetingPackages.find((p) => p.agreementId === agreementId && p.month === month);
+        const meetingExtraFee = pkg ? pkg.extraHours * pkg.extraHourRate : 0;
+
+        const monthBookings = bookings.filter(
+          (b) =>
+            b.userId === agreement.userId &&
+            b.pricingModel !== 'monthly' &&
+            b.status !== 'cancelled' &&
+            b.startDate.startsWith(month)
+        );
+        const adhocBookingFee = monthBookings.reduce((s, b) => s + (b.totalPrice || 0), 0);
+
+        const totalAmount = baseFee + meetingExtraFee + adhocBookingFee;
+        const paidAmount = payments
+          .filter((p) => p.userId === agreement.userId && p.billMonth === month && p.status === 'paid')
+          .reduce((s, p) => s + p.amount, 0);
+
+        const items: MonthlyBill['items'] = [];
+        items.push({
+          id: generateId('bi'),
+          type: 'base',
+          description: `月度协议租金（${agreement.resourceName || '办公空间'}）`,
+          amount: baseFee,
+          referenceId: agreementId,
+          createdAt: formatDate(new Date())
+        });
+        if (pkg && pkg.extraHours > 0) {
+          items.push({
+            id: generateId('bi'),
+            type: 'meeting_extra',
+            description: `会议室超额使用 ${pkg.extraHours} 小时 × ${formatCurrency(pkg.extraHourRate)}`,
+            amount: meetingExtraFee,
+            quantity: pkg.extraHours,
+            unitPrice: pkg.extraHourRate,
+            referenceId: pkg.id,
+            createdAt: formatDate(new Date())
+          });
+        }
+        for (const b of monthBookings) {
+          if (b.totalPrice > 0) {
+            items.push({
+              id: generateId('bi'),
+              type: 'booking',
+              description: `${b.resourceName}（${b.startDate} ~ ${b.endDate}）`,
+              amount: b.totalPrice,
+              referenceId: b.id,
+              createdAt: b.createdAt
+            });
+          }
+        }
+
+        const newBill: MonthlyBill = {
+          id: generateId('bill'),
+          userId: agreement.userId,
+          userName: user?.name,
+          company: user?.company,
+          agreementId,
+          month,
+          baseFee,
+          meetingExtraFee,
+          adhocBookingFee,
+          totalAmount,
+          paidAmount,
+          settlementStatus: paidAmount >= totalAmount ? 'paid' : 'pending',
+          items,
+          createdAt: formatDate(new Date())
+        };
+
+        set({ monthlyBills: [...get().monthlyBills.filter(b => !(b.agreementId === agreementId && b.month === month)), newBill] });
+        get().addNotification(`${month} 月度账单已生成`, 'success');
+        return newBill;
+      },
+
+      confirmSettlement: (billId) => {
+        const bill = get().monthlyBills.find((b) => b.id === billId);
+        if (!bill) return;
+        if (bill.settlementStatus !== 'pending') return;
+
+        const nowStr = formatDate(new Date(), 'yyyy-MM-dd HH:mm');
+        set({
+          monthlyBills: get().monthlyBills.map((b) =>
+            b.id === billId
+              ? { ...b, settlementStatus: 'confirmed', confirmedAt: nowStr }
+              : b
+          ),
+          payments: get().payments.map((p) =>
+            p.userId === bill.userId && p.billMonth === bill.month && p.status === 'pending'
+              ? { ...p, settlementStatus: 'confirmed' }
+              : p
+          )
+        });
+        get().addNotification(`已确认 ${bill.month} 月度账单，客户端已同步更新`, 'success');
+      },
+
+      markBillPaid: (billId, amount) => {
+        const bill = get().monthlyBills.find((b) => b.id === billId);
+        if (!bill) return;
+
+        const paidNow = amount ?? bill.totalAmount - bill.paidAmount;
+        const newPaidAmount = bill.paidAmount + paidNow;
+        const nowStr = formatDate(new Date(), 'yyyy-MM-dd HH:mm');
+        const user = get().users.find((u) => u.id === bill.userId);
+
+        const newPayment: Payment = {
+          id: generateId('p'),
+          userId: bill.userId,
+          userName: user?.name,
+          amount: paidNow,
+          method: 'monthly',
+          status: 'paid',
+          description: `${bill.month} 月度账单结算`,
+          billMonth: bill.month,
+          settlementStatus: 'paid',
+          paidAt: nowStr,
+          createdAt: nowStr
+        };
+
+        set({
+          monthlyBills: get().monthlyBills.map((b) =>
+            b.id === billId
+              ? { ...b, paidAmount: newPaidAmount, settlementStatus: newPaidAmount >= b.totalAmount ? 'paid' : b.settlementStatus, paidAt: newPaidAmount >= b.totalAmount ? nowStr : b.paidAt }
+              : b
+          ),
+          payments: [...get().payments, newPayment]
+        });
+        get().addNotification(`已记录收款 ${formatCurrency(paidNow)}`, 'success');
+      },
+
+      getBillByMonth: (userId, month) => {
+        return get().monthlyBills.find((b) => b.userId === userId && b.month === month) || null;
       }
     }),
     {
@@ -436,11 +582,14 @@ export const useAppStore = create<AppState>()(
         resources: state.resources,
         bookings: state.bookings,
         payments: state.payments,
+        monthlyBills: state.monthlyBills,
         agreements: state.agreements,
         meetingPackages: state.meetingPackages,
         visitors: state.visitors,
         posts: state.posts,
-        comments: state.comments
+        comments: state.comments,
+        dailyAnalytics: state.dailyAnalytics,
+        resourceOccupancy: state.resourceOccupancy,
       })
     }
   )

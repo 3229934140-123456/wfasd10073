@@ -301,6 +301,8 @@ export const mockPayments: Payment[] = [
     amount: 8500,
     method: 'monthly',
     status: 'paid',
+    settlementStatus: 'paid',
+    billMonth: '2026-06',
     description: '2026年6月 独立办公室B-201月租',
     paidAt: '2026-05-20',
     createdAt: '2026-05-20'
@@ -313,6 +315,7 @@ export const mockPayments: Payment[] = [
     amount: 150,
     method: 'online',
     status: 'paid',
+    billMonth: '2026-06',
     description: 'A区开放工位001 三天日租',
     paidAt: '2026-06-17',
     createdAt: '2026-06-17'
@@ -324,6 +327,8 @@ export const mockPayments: Payment[] = [
     amount: 800,
     method: 'monthly',
     status: 'paid',
+    settlementStatus: 'paid',
+    billMonth: '2026-06',
     description: '2026年6月 A区开放工位003月租',
     paidAt: '2026-05-25',
     createdAt: '2026-05-25'
@@ -336,6 +341,8 @@ export const mockPayments: Payment[] = [
     amount: 500,
     method: 'monthly',
     status: 'pending',
+    settlementStatus: 'pending',
+    billMonth: '2026-06',
     description: '中型会议室B1 日租',
     createdAt: '2026-06-16'
   },
@@ -346,9 +353,163 @@ export const mockPayments: Payment[] = [
     amount: 800,
     method: 'monthly',
     status: 'paid',
+    settlementStatus: 'paid',
+    billMonth: '2026-06',
     description: '2026年6月 A区开放工位002月租',
     paidAt: '2026-05-28',
     createdAt: '2026-05-28'
+  },
+  {
+    id: 'p6',
+    userId: 'u3',
+    userName: '王五',
+    amount: 300,
+    method: 'monthly',
+    status: 'pending',
+    settlementStatus: 'pending',
+    billMonth: '2026-06',
+    description: '中型会议室B1 超额使用3小时',
+    createdAt: '2026-06-18'
+  },
+  {
+    id: 'p7',
+    userId: 'u3',
+    userName: '王五',
+    amount: 800,
+    method: 'monthly',
+    status: 'paid',
+    settlementStatus: 'paid',
+    billMonth: '2026-05',
+    description: '2026年5月 A区开放工位003月租',
+    paidAt: '2026-04-28',
+    createdAt: '2026-04-28'
+  }
+];
+
+export const mockMonthlyBills: MonthlyBill[] = [
+  {
+    id: 'bill1',
+    userId: 'u3',
+    userName: '王五',
+    company: '科技之星有限公司',
+    agreementId: 'a1',
+    month: '2026-05',
+    baseFee: 800,
+    meetingExtraFee: 0,
+    adhocBookingFee: 0,
+    totalAmount: 800,
+    paidAmount: 800,
+    settlementStatus: 'paid',
+    confirmedAt: '2026-05-01',
+    paidAt: '2026-04-28',
+    items: [
+      {
+        id: 'bi1',
+        type: 'base',
+        description: '月度协议租金（A区开放工位003）',
+        amount: 800,
+        referenceId: 'a1',
+        createdAt: '2026-05-01'
+      }
+    ],
+    createdAt: '2026-05-01'
+  },
+  {
+    id: 'bill2',
+    userId: 'u3',
+    userName: '王五',
+    company: '科技之星有限公司',
+    agreementId: 'a1',
+    month: '2026-06',
+    baseFee: 800,
+    meetingExtraFee: 300,
+    adhocBookingFee: 0,
+    totalAmount: 1100,
+    paidAmount: 800,
+    settlementStatus: 'pending',
+    confirmedAt: undefined,
+    paidAt: undefined,
+    items: [
+      {
+        id: 'bi2',
+        type: 'base',
+        description: '月度协议租金（A区开放工位003）',
+        amount: 800,
+        referenceId: 'a1',
+        createdAt: '2026-06-01'
+      },
+      {
+        id: 'bi3',
+        type: 'meeting_extra',
+        description: '会议室超额使用3小时 × ¥100',
+        amount: 300,
+        quantity: 3,
+        unitPrice: 100,
+        referenceId: 'mp1',
+        createdAt: '2026-06-18'
+      }
+    ],
+    createdAt: '2026-06-01'
+  },
+  {
+    id: 'bill3',
+    userId: 'u4',
+    userName: '赵六',
+    company: '创新科技',
+    agreementId: 'a2',
+    month: '2026-06',
+    baseFee: 8500,
+    meetingExtraFee: 0,
+    adhocBookingFee: 500,
+    totalAmount: 9000,
+    paidAmount: 8500,
+    settlementStatus: 'pending',
+    items: [
+      {
+        id: 'bi4',
+        type: 'base',
+        description: '月度协议租金（独立办公室B-201）',
+        amount: 8500,
+        referenceId: 'a2',
+        createdAt: '2026-06-01'
+      },
+      {
+        id: 'bi5',
+        type: 'booking',
+        description: '中型会议室B1（2026-06-16 09:00 ~ 2026-06-16 18:00）',
+        amount: 500,
+        referenceId: 'b5',
+        createdAt: '2026-06-16'
+      }
+    ],
+    createdAt: '2026-06-01'
+  },
+  {
+    id: 'bill4',
+    userId: 'u6',
+    userName: '孙八',
+    company: '数据科学工作室',
+    agreementId: 'a3',
+    month: '2026-06',
+    baseFee: 800,
+    meetingExtraFee: 0,
+    adhocBookingFee: 0,
+    totalAmount: 800,
+    paidAmount: 800,
+    settlementStatus: 'paid',
+    paidAt: '2026-05-28',
+    confirmedAt: '2026-06-01',
+    items: [
+      {
+        id: 'bi6',
+        type: 'base',
+        description: '月度协议租金（A区开放工位002）',
+        amount: 800,
+        referenceId: 'a3',
+        createdAt: '2026-06-01'
+      }
+    ],
+    createdAt: '2026-06-01'
   }
 ];
 

@@ -59,6 +59,7 @@ export interface Booking {
 
 export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'refunded';
 export type PaymentMethod = 'online' | 'monthly';
+export type SettlementStatus = 'pending' | 'confirmed' | 'paid' | 'overdue';
 
 export interface Payment {
   id: string;
@@ -70,6 +71,38 @@ export interface Payment {
   status: PaymentStatus;
   description: string;
   paidAt?: string;
+  billMonth?: string;
+  settlementStatus?: SettlementStatus;
+  createdAt: string;
+}
+
+export interface MonthlyBill {
+  id: string;
+  userId: string;
+  userName?: string;
+  company?: string;
+  agreementId: string;
+  month: string;
+  baseFee: number;
+  meetingExtraFee: number;
+  adhocBookingFee: number;
+  totalAmount: number;
+  paidAmount: number;
+  settlementStatus: SettlementStatus;
+  confirmedAt?: string;
+  paidAt?: string;
+  items: MonthlyBillItem[];
+  createdAt: string;
+}
+
+export interface MonthlyBillItem {
+  id: string;
+  type: 'base' | 'meeting_extra' | 'booking' | 'adjustment';
+  description: string;
+  amount: number;
+  referenceId?: string;
+  quantity?: number;
+  unitPrice?: number;
   createdAt: string;
 }
 

@@ -226,3 +226,23 @@ export function getRoleLabel(role: string): string {
 export function getPostTypeLabel(type: string): string {
   return type === 'recruitment' ? '招聘信息' : '合作需求';
 }
+
+export function getSettlementStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    pending: '待结算',
+    confirmed: '已确认',
+    paid: '已付款',
+    overdue: '已逾期'
+  };
+  return labels[status] || status;
+}
+
+export function getSettlementStatusVariant(status: string): 'default' | 'success' | 'warning' | 'danger' | 'info' | 'muted' {
+  const map: Record<string, 'default' | 'success' | 'warning' | 'danger' | 'info' | 'muted'> = {
+    pending: 'warning',
+    confirmed: 'info',
+    paid: 'success',
+    overdue: 'danger'
+  };
+  return map[status] || 'default';
+}
