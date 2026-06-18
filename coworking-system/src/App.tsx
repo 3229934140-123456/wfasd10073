@@ -13,6 +13,7 @@ import { AgreementsPage } from './pages/AgreementsPage';
 import { VisitorsPage } from './pages/VisitorsPage';
 import { AnalyticsPage } from './pages/AnalyticsPage';
 import { CommunityPage } from './pages/CommunityPage';
+import { OperatorBillingPage } from './pages/OperatorBillingPage';
 
 function App() {
   return (
@@ -33,6 +34,7 @@ function App() {
           <Route path="/agreements" element={<AgreementsPage />} />
           <Route path="/visitors" element={<VisitorsPage />} />
           <Route path="/analytics" element={<AnalyticsPage />} />
+          <Route path="/operator-billing" element={<OperatorBillingPage />} />
           <Route path="/community" element={<CommunityPage />} />
         </Route>
 

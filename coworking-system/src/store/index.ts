@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { User, Resource, Booking, Payment, MonthlyAgreement, MeetingPackage, Visitor, CommunityPost, CommunityComment, PricingModel, DailyAnalytics, ResourceOccupancy, MonthlyBill } from '../types';
 import { mockUsers, mockResources, mockBookings, mockPayments, mockAgreements, mockMeetingPackages, mockVisitors, mockPosts, mockComments, mockDailyAnalytics, mockResourceOccupancy, mockMonthlyBills } from '../data/mockData';
-import { generateId, calculateTotalPrice, generateAccessCode, formatDate, validateMinDuration, findConflictingBooking, calculateHours } from '../utils';
+import { generateId, calculateTotalPrice, generateAccessCode, formatDate, formatCurrency, validateMinDuration, findConflictingBooking, calculateHours } from '../utils';
 
 interface AppState {
   currentUser: User | null;
@@ -200,6 +200,8 @@ export const useAppStore = create<AppState>()(
                   amount: extraFee,
                   method: 'monthly',
                   status: 'pending',
+                  billMonth: formatDate(new Date(), 'yyyy-MM'),
+                  settlementStatus: 'pending',
                   description: `会议室 ${resource.name} 超额使用 ${deductedExtraHours} 小时（${formatDate(data.startDate)}）`,
                   createdAt: formatDate(new Date(), 'yyyy-MM-dd HH:mm')
                 };
@@ -329,6 +331,8 @@ export const useAppStore = create<AppState>()(
           amount: booking.totalPrice,
           method: currentUser.role === 'resident' ? 'monthly' : 'online',
           status: 'paid',
+          billMonth: formatDate(new Date(), 'yyyy-MM'),
+          settlementStatus: currentUser.role === 'resident' ? 'pending' : undefined,
           description: `${booking.resourceName} ${booking.startDate} 预订付款`,
           paidAt: formatDate(new Date(), 'yyyy-MM-dd HH:mm'),
           createdAt: formatDate(new Date(), 'yyyy-MM-dd HH:mm')
@@ -528,7 +532,7 @@ export const useAppStore = create<AppState>()(
               : b
           ),
           payments: get().payments.map((p) =>
-            p.userId === bill.userId && p.billMonth === bill.month && p.status === 'pending'
+            p.userId === bill.userId && p.billMonth === bill.month && p.method === 'monthly' && (!p.settlementStatus || p.settlementStatus === 'pending')
               ? { ...p, settlementStatus: 'confirmed' }
               : p
           )

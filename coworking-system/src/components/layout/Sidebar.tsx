@@ -16,6 +16,7 @@ import {
   Settings,
   LogOut,
   Briefcase,
+  ClipboardCheck,
 } from 'lucide-react';
 
 interface NavItem {
@@ -29,6 +30,7 @@ const navItems: NavItem[] = [
   { label: '仪表盘', icon: LayoutDashboard, path: '/dashboard', roles: ['operator'] },
   { label: '资源管理', icon: Building2, path: '/resources', roles: ['operator'] },
   { label: '收入管理', icon: TrendingUp, path: '/analytics', roles: ['operator'] },
+  { label: '月结对账', icon: ClipboardCheck, path: '/operator-billing', roles: ['operator'] },
 
   { label: '预订资源', icon: CalendarDays, path: '/booking', roles: ['customer', 'resident'] },
   { label: '我的预订', icon: FileText, path: '/my-bookings', roles: ['customer', 'resident'] },

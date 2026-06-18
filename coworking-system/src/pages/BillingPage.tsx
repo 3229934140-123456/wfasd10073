@@ -3,7 +3,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../co
 import { Badge } from '../components/ui/Badge';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/Modal';
 import { Select } from '../components/ui/Input';
-import { cn, formatCurrency, formatDateTime, getStatusLabel, getSettlementStatusLabel, getSettlementStatusVariant } from '../utils';
+import { cn, formatCurrency, formatDate, formatDateTime, getStatusLabel, getSettlementStatusLabel, getSettlementStatusVariant } from '../utils';
 import { CreditCard, TrendingUp, FileText, DollarSign, Receipt, Calendar, Clock, Users, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle } from 'lucide-react';
 import { useState, useMemo } from 'react';
 import type { MonthlyBill } from '../types';

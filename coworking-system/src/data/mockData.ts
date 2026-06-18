@@ -1,4 +1,4 @@
-import { User, Resource, Booking, Payment, MonthlyAgreement, Visitor, CommunityPost, CommunityComment, MeetingPackage, DailyAnalytics, ResourceOccupancy } from '../types';
+import { User, Resource, Booking, Payment, MonthlyAgreement, Visitor, CommunityPost, CommunityComment, MeetingPackage, DailyAnalytics, ResourceOccupancy, MonthlyBill } from '../types';
 
 export const mockUsers: User[] = [
   {
